@@ -1,0 +1,153 @@
+import asyncio
+import datetime
+import logging
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+import aiohttp
+
+# 1. Танзимот
+BOT_TOKEN = "8560757080:AAHJ0fvvzdoyK2eXoeYJQW0PlzG2hhJMvlU"
+MY_CHAT_ID = 6900346716  # Telegram ID-и худро гузоред
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
+# Барои пайгирии ҳолатҳо
+last_notified_rate = None
+welcomed_today = False  # Барои як бор гуфтани "Субҳи бахайр" дар рӯзи корӣ
+
+# 2. Гирифтани курс аз API
+async def get_exchange_rates():
+    url = "https://open.er-api.com/v6/latest/RUB"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    rates = data.get("rates", {})
+                    
+                    usd_rate = rates.get("USD")
+                    tjs_rate = rates.get("TJS", 0)
+                    
+                    if usd_rate and usd_rate > 0:
+                        usd_in_rub = round(1 / usd_rate, 2)
+                        rub_in_tjs = round(tjs_rate, 4)
+                        return usd_in_rub, rub_in_tjs
+    except Exception as e:
+        logging.error(f"Хатогӣ дар гирифтани курс: {e}")
+    return None, None
+
+# 3. Вазифаи асосии пайгирӣ ва ҳимоя аз хоб рафтани Render (Keep-Alive)
+async def track_currency_loop():
+    global last_notified_rate, welcomed_today
+    
+    # Шумораи сонияҳо барои пешгирии хоби Render (~8 дақиқа = 480 сония)
+    render_ping_timer = 0
+    
+    while True:
+        now = datetime.datetime.now()
+        weekday = now.weekday()  # 0-4 Душанбе то Ҷумъа, 5-6 Шанбе ва Якшанбе
+        is_weekend = (weekday >= 5)
+        
+        usd_rub, rub_tjs = await get_exchange_rates()
+        
+        if usd_rub and rub_tjs:
+            if last_notified_rate is None:
+                last_notified_rate = usd_rub
+
+            # Санҷиши оғози рӯзи корӣ (Пас аз истироҳат - Душанбе)
+            if not is_weekend:
+                if not welcomed_today:
+                    # Паёми махсуси субҳи бахайр баъди рӯзҳои истироҳат
+                    morning_msg = (
+                        "🌅 **Субҳи бахайр! Рӯзи корӣ оғоз ёфт.** 💼\n"
+                        f"📊 Курси ҳозираи асъор:\n"
+                        f"🇺🇸 **1 USD:** {usd_rub} RUB\n"
+                        f"🇹🇯 **1000 RUB:** {round(rub_tjs * 1000, 2)} TJS"
+                    )
+                    try:
+                        await bot.send_message(chat_id=MY_CHAT_ID, text=morning_msg, parse_mode="Markdown")
+                    except Exception as e:
+                        logging.error(f"Хатогӣ дар паёми субҳона: {e}")
+                    
+                    welcomed_today = True
+            else:
+                # Рӯзҳои истироҳат флагро аз нав мекунем, то рӯзи Душанбе боз субҳи бахайр гӯяд
+                welcomed_today = False
+
+            # Санҷиши тағйирёбии курс (Фарқияти 1 рубл)
+            diff = round(usd_rub - last_notified_rate, 2)
+            if abs(diff) >= 1.0:
+                tjs_1000 = round(rub_tjs * 1000, 2)
+                
+                if diff < 0:
+                    trend_text = "📉 **ДИҚҚАТ! Доллар поён фаромад / Рубл қавитар шуд!**\n⚡️ *Тайёр шав, фурсати харид аст!*"
+                else:
+                    trend_text = "📈 **ДИҚҚАТ! Доллар боло рафт / Рубл арзон шуд!**"
+
+                alert_msg = (
+                    f"🚨 **ТАҒЙИРИ НАЗАРРАСИ КУРС!**\n\n"
+                    f"{trend_text}\n\n"
+                    f"🇺🇸 **1 USD:** {usd_rub} RUB (Фарқият: {diff:+.2f})\n"
+                    f"🇹🇯 **1 RUB:** {rub_tjs} TJS\n"
+                    f"🇹🇯 **1000 RUB:** {tjs_1000} TJS"
+                )
+                
+                try:
+                    await bot.send_message(chat_id=MY_CHAT_ID, text=alert_msg, parse_mode="Markdown")
+                    last_notified_rate = usd_rub
+                except Exception as e:
+                    logging.error(f"Хатогӣ дар фиристодани ҳушдор: {e}")
+
+        # Тадбир барои Рендер (Ҳар 8 дақиқа худашро ба кор медарорад, то хоб накунад)
+        render_ping_timer += 10
+        if render_ping_timer >= 480:  # 480 сония = 8 дақиқа
+            print("🔄 [Render Keep-Alive] Бот барои бедор мондан фаъолият кард.")
+            render_ping_timer = 0
+
+        # Санҷиши курс ҳар 10 сония
+        await asyncio.sleep(10)
+
+# 4. Фармонҳои /start ва /kurs бо назардошти рӯзҳои истироҳат
+@dp.message(Command("start", "kurs"))
+async def handle_commands(message: types.Message):
+    now = datetime.datetime.now()
+    is_weekend = (now.weekday() >= 5)
+    
+    if is_weekend:
+        weekend_reply = (
+            "🏖 **Имрӯз рӯзи истироҳат аст!**\n"
+            "Бозорҳо ва бонкҳо маҳкаманд, аммо курси кунунии биржа чунин аст:\n\n"
+        )
+    else:
+        weekend_reply = "💼 **Рӯзи корӣ. Курси ҳозираи асъор:**\n\n"
+
+    await message.answer("⏳ Санҷида истодааст...")
+    
+    usd_rub, rub_tjs = await get_exchange_rates()
+    
+    if usd_rub and rub_tjs:
+        tjs_1000 = round(rub_tjs * 1000, 2)
+        full_msg = (
+            f"{weekend_reply}"
+            f"🇺🇸 **1 USD:** {usd_rub} RUB\n"
+            f"🇹🇯 **1 RUB:** {rub_tjs} TJS\n"
+            f"🇹🇯 **1000 RUB:** {tjs_1000} TJS"
+        )
+        await message.answer(full_msg, parse_mode="Markdown")
+    else:
+        await message.answer("❌ Хатогӣ дар пайвастшавӣ ба интернет.")
+
+# 5. Қисми асосӣ
+async def main():
+    logging.basicConfig(level=logging.INFO)
+    print("-----------------------------------")
+    print("🚀 БОТИ НАВ БАРОИ RENDER ОМОДА ШУД!")
+    print("-----------------------------------")
+    
+    await bot.delete_webhook(drop_pending_updates=True)
+    asyncio.create_task(track_currency_loop())
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
