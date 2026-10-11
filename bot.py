@@ -1,20 +1,35 @@
 import asyncio
 import datetime
 import logging
+import os
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 import aiohttp
+from aiohttp import web
 
-# 1. Танзимот
+# 1. Танзимот (Токен ва ID-и худро гузоред)
 BOT_TOKEN = "8560757080:AAHJ0fvvzdoyK2eXoeYJQW0PlzG2hhJMvlU"
 MY_CHAT_ID = 6900346716  # Telegram ID-и худро гузоред
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Барои пайгирии ҳолатҳо
 last_notified_rate = None
-welcomed_today = False  # Барои як бор гуфтани "Субҳи бахайр" дар рӯзи корӣ
+welcomed_today = False
+
+# Веб-сервер барои қонеъ кардани талаботи Render (кушодани порт)
+async def handle(request):
+    return web.Response(text="Bot is running and alive!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"🌐 Веб-сервер дар порги {port} ба кор даромад.")
 
 # 2. Гирифтани курс аз API
 async def get_exchange_rates():
@@ -37,11 +52,9 @@ async def get_exchange_rates():
         logging.error(f"Хатогӣ дар гирифтани курс: {e}")
     return None, None
 
-# 3. Вазифаи асосии пайгирӣ ва ҳимоя аз хоб рафтани Render (Keep-Alive)
+# 3. Вазифаи асосии пайгирӣ ва ҳимоя аз хоб рафтан
 async def track_currency_loop():
     global last_notified_rate, welcomed_today
-    
-    # Шумораи сонияҳо барои пешгирии хоби Render (~8 дақиқа = 480 сония)
     render_ping_timer = 0
     
     while True:
@@ -58,7 +71,6 @@ async def track_currency_loop():
             # Санҷиши оғози рӯзи корӣ (Пас аз истироҳат - Душанбе)
             if not is_weekend:
                 if not welcomed_today:
-                    # Паёми махсуси субҳи бахайр баъди рӯзҳои истироҳат
                     morning_msg = (
                         "🌅 **Субҳи бахайр! Рӯзи корӣ оғоз ёфт.** 💼\n"
                         f"📊 Курси ҳозираи асъор:\n"
@@ -69,13 +81,11 @@ async def track_currency_loop():
                         await bot.send_message(chat_id=MY_CHAT_ID, text=morning_msg, parse_mode="Markdown")
                     except Exception as e:
                         logging.error(f"Хатогӣ дар паёми субҳона: {e}")
-                    
                     welcomed_today = True
             else:
-                # Рӯзҳои истироҳат флагро аз нав мекунем, то рӯзи Душанбе боз субҳи бахайр гӯяд
                 welcomed_today = False
 
-            # Санҷиши тағйирёбии курс (Фарқияти 1 рубл)
+            # Санҷиши фарқияти 1 рубл
             diff = round(usd_rub - last_notified_rate, 2)
             if abs(diff) >= 1.0:
                 tjs_1000 = round(rub_tjs * 1000, 2)
@@ -99,16 +109,15 @@ async def track_currency_loop():
                 except Exception as e:
                     logging.error(f"Хатогӣ дар фиристодани ҳушдор: {e}")
 
-        # Тадбир барои Рендер (Ҳар 8 дақиқа худашро ба кор медарорад, то хоб накунад)
+        # Тадбир барои нигоҳ доштани фаъолияти Render (~8 дақиқа)
         render_ping_timer += 10
-        if render_ping_timer >= 480:  # 480 сония = 8 дақиқа
+        if render_ping_timer >= 480:
             print("🔄 [Render Keep-Alive] Бот барои бедор мондан фаъолият кард.")
             render_ping_timer = 0
 
-        # Санҷиши курс ҳар 10 сония
         await asyncio.sleep(10)
 
-# 4. Фармонҳои /start ва /kurs бо назардошти рӯзҳои истироҳат
+# 4. Фармонҳои фаврии /start ва /kurs бо назардошти рӯзҳои истироҳат
 @dp.message(Command("start", "kurs"))
 async def handle_commands(message: types.Message):
     now = datetime.datetime.now()
@@ -142,12 +151,17 @@ async def handle_commands(message: types.Message):
 async def main():
     logging.basicConfig(level=logging.INFO)
     print("-----------------------------------")
-    print("🚀 БОТИ НАВ БАРОИ RENDER ОМОДА ШУД!")
+    print("🚀 БОТИ КОМИЛ БА КОР ДАРОМАД!")
     print("-----------------------------------")
     
     await bot.delete_webhook(drop_pending_updates=True)
+    
+    # Веб-серверро барои Render кор медарорем
+    asyncio.create_task(start_web_server())
+    # Пайгирии курсро сар медиҳем
     asyncio.create_task(track_currency_loop())
+    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main:)
