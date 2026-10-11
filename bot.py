@@ -59,7 +59,7 @@ async def track_currency_loop():
     
     while True:
         now = datetime.datetime.now()
-        weekday = now.weekday()  # 0-4 Душанбе то Ҷумъа, 5-6 Шанбе ва Якшанбе
+        weekday = now.weekday()
         is_weekend = (weekday >= 5)
         
         usd_rub, rub_tjs = await get_exchange_rates()
@@ -68,7 +68,6 @@ async def track_currency_loop():
             if last_notified_rate is None:
                 last_notified_rate = usd_rub
 
-            # Санҷиши оғози рӯзи корӣ (Пас аз истироҳат - Душанбе)
             if not is_weekend:
                 if not welcomed_today:
                     morning_msg = (
@@ -85,7 +84,6 @@ async def track_currency_loop():
             else:
                 welcomed_today = False
 
-            # Санҷиши фарқияти 1 рубл
             diff = round(usd_rub - last_notified_rate, 2)
             if abs(diff) >= 1.0:
                 tjs_1000 = round(rub_tjs * 1000, 2)
@@ -109,7 +107,6 @@ async def track_currency_loop():
                 except Exception as e:
                     logging.error(f"Хатогӣ дар фиристодани ҳушдор: {e}")
 
-        # Тадбир барои нигоҳ доштани фаъолияти Render (~8 дақиқа)
         render_ping_timer += 10
         if render_ping_timer >= 480:
             print("🔄 [Render Keep-Alive] Бот барои бедор мондан фаъолият кард.")
@@ -117,7 +114,7 @@ async def track_currency_loop():
 
         await asyncio.sleep(10)
 
-# 4. Фармонҳои фаврии /start ва /kurs бо назардошти рӯзҳои истироҳат
+# 4. Фармонҳои фаврии /start ва /kurs
 @dp.message(Command("start", "kurs"))
 async def handle_commands(message: types.Message):
     now = datetime.datetime.now()
@@ -156,12 +153,10 @@ async def main():
     
     await bot.delete_webhook(drop_pending_updates=True)
     
-    # Веб-серверро барои Render кор медарорем
     asyncio.create_task(start_web_server())
-    # Пайгирии курсро сар медиҳем
     asyncio.create_task(track_currency_loop())
     
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main:)
+    asyncio.run(main())
