@@ -8,7 +8,7 @@ import aiohttp
 from aiohttp import web
 
 # 1. Танзимот (Токен ва ID-и худро гузоред)
-BOT_TOKEN = "8560757080:AAHJ0fvvzdoyK2eXoeYJQW0PlzG2hhJMvlU"
+BOT_TOKEN = "8182346917:AAGgZpSXqf-XOTl1HJjgsw1vC_fLRK3U46U"
 MY_CHAT_ID = 6900346716  # Telegram ID-и худро гузоред
 
 bot = Bot(token=BOT_TOKEN)
