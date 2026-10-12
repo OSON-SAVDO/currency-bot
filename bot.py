@@ -32,54 +32,60 @@ async def start_web_server():
     await site.start()
     print(f"🌐 Веб-сервер дар порги {port} ба кор даромад.")
 
-# 2. Гирифтани курс аз API бо пешгирии кеш (USD/RUB ва RUB/TJS)
+# 2. Гирифтани курси воқеӣ аз Бонки Марказии Русия ва биржа
 async def get_exchange_rates():
     timestamp = int(time.time())
-    # Истифодаи API-и дақиқ ва боэътимод бо parameter-и timestamp барои гурехтан аз кеш
-    url = f"https://api.exchangerate-api.com/v4/latest/USD?t={timestamp}"
+    url_cbr = "https://www.cbr-xml-daily.ru/daily_json.js"
     
     headers = {
         "Cache-Control": "no-cache",
-        "Pragma": "no-cache"
+        "Pragma": "no-cache",
+        "User-Agent": "Mozilla/5.0"
     }
     
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=10) as response:
+            # Гирифтани курси USD ба RUB аз Бонки Марказии Русия
+            async with session.get(url_cbr, headers=headers, timeout=10) as response:
                 if response.status == 200:
                     data = await response.json()
-                    rates = data.get("rates", {})
+                    valutes = data.get("Valute", {})
+                    usd_data = valutes.get("USD", {})
+                    usd_in_rub = usd_data.get("Value")
                     
-                    rub_rate = rates.get("RUB") # Чаппаи USD ба RUB ё бевосита
-                    tjs_rate = rates.get("TJS")
-                    
-                    if rub_rate and tjs_rate and tjs_rate > 0:
-                        # Агар API ба мо USD ба RUB ва USD ба TJS диҳад, мо метавонем RUB ба TJS-ро ҳисоб кунем
-                        # ё бевосита таносубро ёбем: 1 RUB = (USD ба TJS) / (USD ба RUB)
-                        usd_in_rub = round(rub_rate, 2)
-                        rub_in_tjs = round(tjs_rate / rub_rate, 4)
-                        return usd_in_rub, rub_in_tjs
+                    if usd_in_rub:
+                        usd_in_rub = round(usd_in_rub, 2)
+                        
+                        # Гирифтани курси USD ба TJS барои ҳисоби Рубл ба Сомонӣ
+                        url_tjs = f"https://open.er-api.com/v6/latest/USD?t={timestamp}"
+                        async with session.get(url_tjs, headers=headers, timeout=10) as resp_tjs:
+                            if resp_tjs.status == 200:
+                                data_tjs = await resp_tjs.json()
+                                rates = data_tjs.get("rates", {})
+                                tjs_rate = rates.get("TJS")
+                                
+                                if tjs_rate and usd_in_rub > 0:
+                                    rub_in_tjs = round(tjs_rate / usd_in_rub, 4)
+                                    return usd_in_rub, rub_in_tjs
     except Exception as e:
-        logging.error(f"Хатогӣ дар гирифтани курс: {e}")
+        logging.error(f"Хатогӣ дар гирифтани курси воқеӣ аз CBR: {e}")
         
-    # Захираи дуюм (Fallback API) дар сурати хатогии API-и якум
+    # Захираи дуюм (Fallback API) дар сурати хатогии манбаи якум
     try:
-        url_backup = f"https://open.er-api.com/v6/latest/RUB?t={timestamp}"
+        url_backup = f"https://api.exchangerate-api.com/v4/latest/USD?t={timestamp}"
         async with aiohttp.ClientSession() as session:
             async with session.get(url_backup, headers=headers, timeout=10) as response:
                 if response.status == 200:
                     data = await response.json()
                     rates = data.get("rates", {})
-                    
-                    usd_rate = rates.get("USD")
-                    tjs_rate = rates.get("TJS", 0)
-                    
-                    if usd_rate and usd_rate > 0:
-                        usd_in_rub = round(1 / usd_rate, 2)
-                        rub_in_tjs = round(tjs_rate, 4)
+                    rub_rate = rates.get("RUB")
+                    tjs_rate = rates.get("TJS")
+                    if rub_rate and tjs_rate and rub_rate > 0:
+                        usd_in_rub = round(rub_rate, 2)
+                        rub_in_tjs = round(tjs_rate / rub_rate, 4)
                         return usd_in_rub, rub_in_tjs
     except Exception as e:
-        logging.error(f"Хатогӣ дар гирифтани курс аз backup API: {e}")
+        logging.error(f"Хатогӣ дар backup API: {e}")
 
     return None, None
 
@@ -144,7 +150,6 @@ async def track_currency_loop():
             print("🔄 [Render Keep-Alive] Бот барои бедор мондан фаъолият кард.")
             render_ping_timer = 0
 
-        # Фосиларо ба 30 сония гузоштем, то ки лимити API ва Render беҳтарин кор кунад
         await asyncio.sleep(30)
 
 # 4. Фармонҳои фаврии /start ва /kurs
