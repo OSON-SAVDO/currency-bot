@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import logging
 import os
+import time
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 import aiohttp
@@ -31,12 +32,41 @@ async def start_web_server():
     await site.start()
     print(f"🌐 Веб-сервер дар порги {port} ба кор даромад.")
 
-# 2. Гирифтани курс аз API
+# 2. Гирифтани курс аз API бо пешгирии кеш (USD/RUB ва RUB/TJS)
 async def get_exchange_rates():
-    url = "https://open.er-api.com/v6/latest/RUB"
+    timestamp = int(time.time())
+    # Истифодаи API-и дақиқ ва боэътимод бо parameter-и timestamp барои гурехтан аз кеш
+    url = f"https://api.exchangerate-api.com/v4/latest/USD?t={timestamp}"
+    
+    headers = {
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
+    }
+    
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=10) as response:
+            async with session.get(url, headers=headers, timeout=10) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    rates = data.get("rates", {})
+                    
+                    rub_rate = rates.get("RUB") # Чаппаи USD ба RUB ё бевосита
+                    tjs_rate = rates.get("TJS")
+                    
+                    if rub_rate and tjs_rate and tjs_rate > 0:
+                        # Агар API ба мо USD ба RUB ва USD ба TJS диҳад, мо метавонем RUB ба TJS-ро ҳисоб кунем
+                        # ё бевосита таносубро ёбем: 1 RUB = (USD ба TJS) / (USD ба RUB)
+                        usd_in_rub = round(rub_rate, 2)
+                        rub_in_tjs = round(tjs_rate / rub_rate, 4)
+                        return usd_in_rub, rub_in_tjs
+    except Exception as e:
+        logging.error(f"Хатогӣ дар гирифтани курс: {e}")
+        
+    # Захираи дуюм (Fallback API) дар сурати хатогии API-и якум
+    try:
+        url_backup = f"https://open.er-api.com/v6/latest/RUB?t={timestamp}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url_backup, headers=headers, timeout=10) as response:
                 if response.status == 200:
                     data = await response.json()
                     rates = data.get("rates", {})
@@ -49,7 +79,8 @@ async def get_exchange_rates():
                         rub_in_tjs = round(tjs_rate, 4)
                         return usd_in_rub, rub_in_tjs
     except Exception as e:
-        logging.error(f"Хатогӣ дар гирифтани курс: {e}")
+        logging.error(f"Хатогӣ дар гирифтани курс аз backup API: {e}")
+
     return None, None
 
 # 3. Вазифаи асосии пайгирӣ ва ҳимоя аз хоб рафтан
@@ -74,6 +105,7 @@ async def track_currency_loop():
                         "🌅 **Субҳи бахайр! Рӯзи корӣ оғоз ёфт.** 💼\n"
                         f"📊 Курси ҳозираи асъор:\n"
                         f"🇺🇸 **1 USD:** {usd_rub} RUB\n"
+                        f"🇹🇯 **1 RUB:** {rub_tjs} TJS\n"
                         f"🇹🇯 **1000 RUB:** {round(rub_tjs * 1000, 2)} TJS"
                     )
                     try:
@@ -107,12 +139,13 @@ async def track_currency_loop():
                 except Exception as e:
                     logging.error(f"Хатогӣ дар фиристодани ҳушдор: {e}")
 
-        render_ping_timer += 10
+        render_ping_timer += 30
         if render_ping_timer >= 480:
             print("🔄 [Render Keep-Alive] Бот барои бедор мондан фаъолият кард.")
             render_ping_timer = 0
 
-        await asyncio.sleep(10)
+        # Фосиларо ба 30 сония гузоштем, то ки лимити API ва Render беҳтарин кор кунад
+        await asyncio.sleep(30)
 
 # 4. Фармонҳои фаврии /start ва /kurs
 @dp.message(Command("start", "kurs"))
@@ -128,7 +161,7 @@ async def handle_commands(message: types.Message):
     else:
         weekend_reply = "💼 **Рӯзи корӣ. Курси ҳозираи асъор:**\n\n"
 
-    await message.answer("⏳ Санҷида истодааст...")
+    sent_msg = await message.answer("⏳ Санҷида истодааст...")
     
     usd_rub, rub_tjs = await get_exchange_rates()
     
@@ -140,9 +173,18 @@ async def handle_commands(message: types.Message):
             f"🇹🇯 **1 RUB:** {rub_tjs} TJS\n"
             f"🇹🇯 **1000 RUB:** {tjs_1000} TJS"
         )
-        await message.answer(full_msg, parse_mode="Markdown")
+        await bot.edit_message_text(
+            text=full_msg, 
+            chat_id=message.chat.id, 
+            message_id=sent_msg.message_id, 
+            parse_mode="Markdown"
+        )
     else:
-        await message.answer("❌ Хатогӣ дар пайвастшавӣ ба интернет.")
+        await bot.edit_message_text(
+            text="❌ Хатогӣ дар пайвастшавӣ ба интернет ё API.", 
+            chat_id=message.chat.id, 
+            message_id=sent_msg.message_id
+        )
 
 # 5. Қисми асосӣ
 async def main():
